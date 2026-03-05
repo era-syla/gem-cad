@@ -1,0 +1,20 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+      .box(100, 60, 15)
+      .faces(">Z").workplane()
+      .rect(80, 40).cutBlind(10)
+      .faces(">Z").workplane(offset=-10)
+      .circle(15).extrude(5)
+      .rect(5, 30).cutBlind(-5)
+      .faces(">Z").workplane()
+      .pushPoints([(40, 20), (40, -20), (-40, 20), (-40, -20)])
+      .hole(6)
+      .faces(">Z").workplane()
+      .pushPoints([(0, 15), (0, -15)])
+      .hole(4, 10)
+      .faces("<X").workplane()
+      .center(0, 2.5)
+      .hole(5)
+)

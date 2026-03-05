@@ -1,0 +1,15 @@
+import cadquery as cq
+
+result = (cq.Workplane("XY")
+    .moveTo(-50, 0).lineTo(-25, 0)
+    .threePointArc((0, 20), (25, 0))
+    .lineTo(50, 0)
+    .line(0, 10).line(-50, 0)
+    .threePointArc((0, 30), (50, 0))
+    .lineTo(-50, 0)
+    .close()
+    .extrude(5)
+    .faces(">Z").workplane()
+    .hole(5)
+    .faces("<Z").workplane(centerOption="CenterOfBoundBox")
+    .hole(5))

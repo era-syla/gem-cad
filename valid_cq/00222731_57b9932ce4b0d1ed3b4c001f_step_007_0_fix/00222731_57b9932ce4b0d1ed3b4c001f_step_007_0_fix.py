@@ -1,0 +1,21 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .box(100, 20, 10)
+    .faces(">Z")
+    .workplane()
+    .rect(80, 8)
+    .extrude(20)
+    .faces(">Z")
+    .workplane(offset=10)
+    .rect(60, 4)
+    .extrude(20)
+    .faces(">Z[1]")
+    .workplane()
+    .box(40, 8, 10)
+    .faces(">Z")
+    .workplane()
+    .rect(20, 2)
+    .extrude(10)
+)

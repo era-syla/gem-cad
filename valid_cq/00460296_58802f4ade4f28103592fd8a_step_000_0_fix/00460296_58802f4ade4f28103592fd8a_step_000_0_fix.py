@@ -1,0 +1,22 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .circle(20)
+    .extrude(5)
+    .faces(">Z")
+    .workplane()
+    .circle(10)
+    .cutThruAll()
+    .faces(">Z")
+    .workplane(centerOption='CenterOfBoundBox')
+    .lineTo(60, 0)
+    .lineTo(40, 40)
+    .close()
+    .extrude(5)
+    .faces(">Z")
+    .workplane(centerOption='CenterOfBoundBox')
+    .center(40, 0)
+    .circle(5)
+    .cutThruAll()
+)

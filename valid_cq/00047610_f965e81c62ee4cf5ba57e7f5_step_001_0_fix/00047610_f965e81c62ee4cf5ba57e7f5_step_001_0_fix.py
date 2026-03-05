@@ -1,0 +1,16 @@
+import cadquery as cq
+
+result = (cq.Workplane("XY")
+          .circle(40)
+          .extrude(2)
+          .faces(">Z")
+          .workplane()
+          .rarray(20, 20, 2, 2)
+          .circle(8)
+          .cutThruAll()
+          .faces(">Z")
+          .edges()
+          .fillet(1)
+          .center(0, 0)
+          .rect(5, 20)
+          .cutThruAll())

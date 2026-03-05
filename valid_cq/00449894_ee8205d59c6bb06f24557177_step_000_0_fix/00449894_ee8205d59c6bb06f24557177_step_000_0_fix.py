@@ -1,0 +1,23 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .moveTo(0, 5)
+    .threePointArc((5, 7), (10, 5))
+    .lineTo(15, 5)
+    .lineTo(15, 2)
+    .lineTo(25, 2)
+    .lineTo(25, 5)
+    .lineTo(35, 5)
+    .lineTo(35, 2)
+    .lineTo(45, 2)
+    .lineTo(45, 5)
+    .lineTo(55, 5)
+    .lineTo(80, 5)
+    .threePointArc((100, 5), (80, 0))
+    .lineTo(55, 0)
+    .lineTo(10, 0)
+    .threePointArc((5, -2), (0, 0))
+    .close()
+    .extrude(5)
+)

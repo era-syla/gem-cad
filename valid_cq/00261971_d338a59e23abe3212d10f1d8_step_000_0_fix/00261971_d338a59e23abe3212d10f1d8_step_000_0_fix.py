@@ -1,0 +1,22 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .center(-15, 0)
+    .moveTo(0, 15)
+    .threePointArc((15, 45), (45, 45))
+    .lineTo(60, 45)
+    .lineTo(60, 0)
+    .lineTo(0, 0)
+    .close()
+    .extrude(5)
+    .faces(">Z")
+    .workplane()
+    .center(15, 0)
+    .hole(4)
+    .faces("<Z")
+    .workplane(offset=2.5)
+    .hole(3)
+    .edges("|Z")
+    .chamfer(1)
+)

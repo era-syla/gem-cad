@@ -1,0 +1,20 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .box(60, 20, 3)
+    .faces(">Z").workplane()
+    .hole(5, 3)
+    .center(20, 0)
+    .slot2D(20, 6)
+    .cutBlind(-3)
+    .faces(">Y").workplane(centerOption="CenterOfMass")
+    .moveTo(0, -10)
+    .lineTo(0, 10)
+    .lineTo(10, 10)
+    .lineTo(10, 0)
+    .close()
+    .extrude(3)
+    .edges(">Z or <Z")
+    .fillet(1)
+)

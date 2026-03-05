@@ -1,0 +1,21 @@
+import cadquery as cq
+
+result = (
+    cq.Workplane("XY")
+    .rect(60, 30)
+    .extrude(3)
+    .faces(">Z")
+    .workplane()
+    .circle(10).cutThruAll()
+    .circle(3).polygon(4, 6).cutThruAll()
+    .center(-20, 0).circle(2).cutThruAll()
+    .center(40, 0).circle(2).cutThruAll()
+    .faces(">Y").workplane(invert=True)
+    .center(-20, -13.5)
+    .rect(6, 20).extrude(2, combine=False)
+    .faces("<X").edges("|Z").fillet(1.5)
+    .faces(">X").workplane(invert=True)
+    .center(-12, -13.5)
+    .rect(6, 20).extrude(2, combine=False)
+    .faces("<X").edges("|Z").fillet(1.5)
+)
