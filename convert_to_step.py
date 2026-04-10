@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 from OCP.BRepCheck import BRepCheck_Analyzer
 py_path = Path(sys.argv[1])
-step_path = py_path.with_suffix('.step')
+out_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else py_path.parent
+step_path = out_dir / (py_path.stem + '.step')
 namespace = {}
 exec(py_path.read_text(), namespace)
 result = namespace.get('result') or namespace.get('solid') or namespace.get('shape') or namespace.get('part')
@@ -37,12 +38,12 @@ shape.exportStep(str(step_path))
 """
 
 
-def convert_file(py_path: Path, timeout: int) -> tuple[str, bool, str]:
+def convert_file(py_path: Path, timeout: int, out_dir: Path = None) -> tuple[str, bool, str]:
     try:
-        proc = subprocess.run(
-            [sys.executable, "-c", _RUNNER, str(py_path)],
-            capture_output=True, text=True, timeout=timeout
-        )
+        cmd = [sys.executable, "-c", _RUNNER, str(py_path)]
+        if out_dir:
+            cmd.append(str(out_dir))
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if proc.returncode == 0:
             return py_path.name, True, ""
         error = proc.stderr.strip().split("\n")[-1] if proc.stderr else "non-zero exit"
@@ -56,6 +57,8 @@ def convert_file(py_path: Path, timeout: int) -> tuple[str, bool, str]:
 def main():
     parser = argparse.ArgumentParser(description="Convert CadQuery .py files to STEP")
     parser.add_argument("--input_dir", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Directory to write STEP files (default: same as input_dir)")
     parser.add_argument("--suffix", type=str, default="_cq",
                         help="Only convert files matching *{suffix}.py")
     parser.add_argument("--workers", type=int, default=8,
@@ -71,7 +74,10 @@ def main():
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
-    fail_log = input_dir / "convert_failures.tsv"
+    out_dir = Path(args.output_dir) if args.output_dir else None
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    fail_log = (out_dir or input_dir) / "convert_failures.tsv"
     pattern = f"*{args.suffix}.py"
     py_files = sorted(input_dir.glob(pattern))
 
@@ -89,7 +95,10 @@ def main():
             with open(fail_log) as f:
                 for line in f:
                     failed_names.add(line.split("\t")[0].strip())
-        py_files = [f for f in py_files if not f.with_suffix(".step").exists() and f.name not in failed_names]
+        def step_exists(f):
+            step_dir = out_dir or f.parent
+            return (step_dir / (f.stem + ".step")).exists()
+        py_files = [f for f in py_files if not step_exists(f) and f.name not in failed_names]
         print(f"Skipped {before - len(py_files)} already done or previously failed")
 
     print(f"Converting {len(py_files)} files with {args.workers} workers...\n")
@@ -98,7 +107,7 @@ def main():
     log_lines = []
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(convert_file, f, args.timeout): f for f in py_files}
+        futures = {executor.submit(convert_file, f, args.timeout, out_dir): f for f in py_files}
         for future in as_completed(futures):
             name, success, error = future.result()
             done += 1
