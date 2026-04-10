@@ -10,11 +10,11 @@ Requires:
 """
 
 import argparse
-import base64
 import json
 import mimetypes
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from google import genai
@@ -45,18 +45,24 @@ def get_mime_type(path: Path) -> str:
     return mime or "application/octet-stream"
 
 
-def collect_images(input_dir: Path) -> list[Path]:
-    images = sorted(
-        p for p in input_dir.iterdir()
-        if p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
-    )
+def collect_images(input_dir: Path, recursive: bool = False) -> list[Path]:
+    if recursive:
+        images = sorted(
+            p for p in input_dir.rglob("*")
+            if p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        )
+    else:
+        images = sorted(
+            p for p in input_dir.iterdir()
+            if p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        )
     if not images:
         raise FileNotFoundError(f"No images found in {input_dir}")
     print(f"Found {len(images)} image(s) in {input_dir}")
     return images
 
 
-def build_jsonl(images: list[Path], jsonl_path: Path, uploaded_files: dict[str, str], thinking_level: str = None):
+def build_jsonl(images: list[Path], jsonl_path: Path, uploaded_files: dict[str, str], thinking_level: str = None, input_dir: Path = None):
     """Build a JSONL file with one request per image."""
     generation_config = {}
     if thinking_level:
@@ -64,8 +70,14 @@ def build_jsonl(images: list[Path], jsonl_path: Path, uploaded_files: dict[str, 
 
     with open(jsonl_path, "w") as f:
         for img_path in images:
+            # Use subfolder/stem as key so results can be routed to the right output subdir
+            if input_dir is not None:
+                rel = img_path.relative_to(input_dir)
+                key = "/".join(list(rel.parts[:-1]) + [img_path.stem]) if len(rel.parts) > 1 else img_path.stem
+            else:
+                key = img_path.stem
             request = {
-                "key": img_path.stem,
+                "key": key,
                 "request": {
                     "contents": [
                         {
@@ -87,11 +99,11 @@ def build_jsonl(images: list[Path], jsonl_path: Path, uploaded_files: dict[str, 
     print(f"Wrote {len(images)} requests to {jsonl_path}")
 
 
-def upload_images(client: genai.Client, images: list[Path]) -> dict[str, str]:
+def upload_images(client: genai.Client, images: list[Path], workers: int = 8) -> dict[str, str]:
     """Upload images via the File API and return {filename: file_uri} mapping."""
     uploaded = {}
-    for img_path in images:
-        print(f"  Uploading {img_path.name}...")
+
+    def upload_one(img_path):
         uploaded_file = client.files.upload(
             file=str(img_path),
             config=types.UploadFileConfig(
@@ -99,7 +111,18 @@ def upload_images(client: genai.Client, images: list[Path]) -> dict[str, str]:
                 mime_type=get_mime_type(img_path),
             ),
         )
-        uploaded[img_path.name] = uploaded_file.uri
+        return img_path.name, uploaded_file.uri
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(upload_one, img): img for img in images}
+        for future in as_completed(futures):
+            name, uri = future.result()
+            uploaded[name] = uri
+            done += 1
+            if done % 50 == 0 or done == len(images):
+                print(f"  Uploaded {done}/{len(images)}...")
+
     print(f"Uploaded {len(uploaded)} image(s)")
     return uploaded
 
@@ -144,14 +167,17 @@ def poll_until_done(client: genai.Client, job_name: str, poll_interval: int = 30
 
 
 def save_results(client: genai.Client, batch_job, output_dir: Path, input_dir: Path, suffix: str = "_31"):
-    """Download results and save each generated code to a .py file next to its source image."""
+    """Download results and save each generated code to a .py file.
+    Key may be 'subfolder/stem' (recursive mode) or plain 'stem'.
+    Output mirrors the subfolder structure under output_dir.
+    """
     if batch_job.state.name != "JOB_STATE_SUCCEEDED":
         print(f"Job did not succeed (state={batch_job.state.name}). No results to save.")
         return
 
     result_file_name = batch_job.dest.file_name
     content_bytes = client.files.download(file=result_file_name)
-    content = content_bytes.decode("utf-8")
+    content = content_bytes.decode("utf-8", errors="replace")
 
     count = 0
     for line in content.splitlines():
@@ -172,20 +198,22 @@ def save_results(client: genai.Client, batch_job, output_dir: Path, input_dir: P
         # Strip markdown fences if present
         if code.strip().startswith("```"):
             lines = code.strip().splitlines()
-            # Remove first and last fence lines
             if lines[0].startswith("```"):
                 lines = lines[1:]
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             code = "\n".join(lines)
 
-        # Save next to the input image
-        out_path = input_dir / f"{key}{suffix}.py"
+        # key may be 'easy/00002221' or plain '00002221'
+        key_path = Path(key)
+        subdir = output_dir / key_path.parent
+        subdir.mkdir(parents=True, exist_ok=True)
+        out_path = subdir / f"{key_path.name}{suffix}.py"
         out_path.write_text(code)
         count += 1
         print(f"  Saved {out_path}")
 
-    print(f"Saved {count} result(s) next to input images in {input_dir}")
+    print(f"Saved {count} result(s) to {output_dir}")
 
 
 def main():
@@ -197,6 +225,12 @@ def main():
     parser.add_argument("--thinking", type=str, default=None, help="Thinking level: LOW, MEDIUM, HIGH")
     parser.add_argument("--poll_interval", type=int, default=30, help="Seconds between status polls")
     parser.add_argument("--max_images", type=int, default=None, help="Limit number of images to process")
+    parser.add_argument("--skip_existing", action="store_true", help="Skip images that already have a output .py file")
+    parser.add_argument("--skip", type=int, default=0, help="Skip the first N images (e.g. already submitted in a previous batch)")
+    parser.add_argument("--workers", type=int, default=8, help="Parallel workers for image upload")
+    parser.add_argument("--api_key", type=str, default=None, help="Gemini API key (overrides GEMINI_API_KEY env var)")
+    parser.add_argument("--recursive", action="store_true", help="Recurse into subfolders of input_dir")
+    parser.add_argument("--exclude_list", type=str, default=None, help="Text file with image paths to exclude (one per line)")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -205,9 +239,9 @@ def main():
     if not input_dir.is_dir():
         raise SystemExit(f"Input directory does not exist: {input_dir}")
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = args.api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise SystemExit("Set the GEMINI_API_KEY environment variable")
+        raise SystemExit("Set the GEMINI_API_KEY environment variable or pass --api_key")
 
     client = genai.Client(api_key=api_key)
 
@@ -215,7 +249,23 @@ def main():
 
     # 1. Collect images
     print("\n[1/6] Collecting images...")
-    images = collect_images(input_dir)
+    images = collect_images(input_dir, recursive=args.recursive)
+    if args.exclude_list:
+        excluded = {Path(l.strip()) for l in open(args.exclude_list) if l.strip()}
+        before = len(images)
+        images = [img for img in images if img not in excluded]
+        print(f"  Excluded {before - len(images)} in-flight images, {len(images)} remaining")
+    if args.skip_existing:
+        before = len(images)
+        def _out_path(img: Path) -> Path:
+            rel = img.relative_to(input_dir)
+            subdir = output_dir / rel.parent
+            return subdir / f"{img.stem}{args.suffix}.py"
+        images = [img for img in images if not _out_path(img).exists()]
+        print(f"  Skipped {before - len(images)} already done, {len(images)} remaining")
+    if args.skip:
+        images = images[args.skip:]
+        print(f"  Skipped first {args.skip} images, {len(images)} remaining")
     if args.max_images:
         images = images[:args.max_images]
         print(f"  Limited to {len(images)} images")
@@ -223,14 +273,14 @@ def main():
     # 2. Upload images
     print("\n[2/6] Uploading images to Gemini File API...")
     t0 = time.time()
-    uploaded_files = upload_images(client, images)
+    uploaded_files = upload_images(client, images, workers=args.workers)
     t_upload = time.time() - t0
     print(f"  Upload took {t_upload:.0f}s ({t_upload/60:.1f}m)")
 
     # 3. Build JSONL
     jsonl_path = Path("batch_requests.jsonl")
     print(f"\n[3/6] Building JSONL request file ({jsonl_path})...")
-    build_jsonl(images, jsonl_path, uploaded_files, thinking_level=args.thinking)
+    build_jsonl(images, jsonl_path, uploaded_files, thinking_level=args.thinking, input_dir=input_dir)
 
     # 4. Submit batch job
     print(f"\n[4/6] Submitting batch job (model={args.model})...")
