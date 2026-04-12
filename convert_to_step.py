@@ -5,6 +5,7 @@ Usage:
 """
 
 import argparse
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -110,10 +111,12 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {executor.submit(convert_file, f, args.timeout, out_dir): f for f in py_files}
         for future in as_completed(futures):
+            py_file = futures[future]
             name, success, error = future.result()
             done += 1
             if success:
                 ok += 1
+                shutil.copy2(py_file, out_dir / py_file.name)
             else:
                 fail += 1
                 log_lines.append(f"{name}\t{error}")
