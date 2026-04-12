@@ -58,7 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert CadQuery .py files to STEP")
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default=None,
-                        help="Directory to write STEP files (default: same as input_dir)")
+                        help="Directory to write STEP files (default: {input_dir}_step/ next to input)")
     parser.add_argument("--suffix", type=str, default="_cq",
                         help="Only convert files matching *{suffix}.py")
     parser.add_argument("--workers", type=int, default=8,
@@ -74,10 +74,12 @@ def main():
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
-    out_dir = Path(args.output_dir) if args.output_dir else None
-    if out_dir:
-        out_dir.mkdir(parents=True, exist_ok=True)
-    fail_log = (out_dir or input_dir) / "convert_failures.tsv"
+    if args.output_dir:
+        out_dir = Path(args.output_dir)
+    else:
+        out_dir = input_dir.parent / (input_dir.name + "_step")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fail_log = out_dir / "convert_failures.tsv"
     pattern = f"*{args.suffix}.py"
     py_files = sorted(input_dir.glob(pattern))
 
@@ -96,8 +98,7 @@ def main():
                 for line in f:
                     failed_names.add(line.split("\t")[0].strip())
         def step_exists(f):
-            step_dir = out_dir or f.parent
-            return (step_dir / (f.stem + ".step")).exists()
+            return (out_dir / (f.stem + ".step")).exists()
         py_files = [f for f in py_files if not step_exists(f) and f.name not in failed_names]
         print(f"Skipped {before - len(py_files)} already done or previously failed")
 
