@@ -21,8 +21,8 @@ from google import genai
 from google.genai import types
 
 # Prompt
-GEMINI_PROMPT = """You are an expert CAD engineer and 
-3D modeling specialist with deep knowledge of 
+GEMINI_PROMPT = """You are an expert CAD engineer and
+3D modeling specialist with deep knowledge of
 mechanical design, geometric modeling, and CadQuery.
 
 Generate CadQuery Python code to create this 3D CAD model
@@ -32,7 +32,8 @@ Requirements:
 - Use CadQuery syntax
 - Create a variable called 'result' containing the final geometry
 - Include all necessary imports
-- Use parametric dimensions where appropriate
+- Infer precise dimensions from the image, using floating-point values where needed (e.g. 12.5, 3.175, 25.4)
+- Do NOT round dimensions to the nearest integer — match the proportions in the image as closely as possible
 - The code must be executable and create valid solid geometry
 
 Return ONLY the Python code, no explanations."""
