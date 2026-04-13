@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from PIL import Image
 from huggingface_hub import HfApi
 
 DST_REPO   = "DeCoDELab/gemcad_data"
@@ -132,8 +133,13 @@ def main():
 
         for sid in chunk:
             try:
-                code        = py_files[sid].read_text(encoding="utf-8", errors="replace")
-                image_bytes = img_files[sid].read_bytes()
+                code = py_files[sid].read_text(encoding="utf-8", errors="replace")
+                img = Image.open(img_files[sid])
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                buf = BytesIO()
+                img.save(buf, format="PNG")
+                image_bytes = buf.getvalue()
                 rows.append((sid, code, image_bytes))
             except Exception as e:
                 errors.append((sid, str(e)))
