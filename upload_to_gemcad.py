@@ -23,7 +23,7 @@ from huggingface_hub import HfApi
 
 DST_REPO   = "DeCoDELab/gemcad_data"
 CKPT_FILE  = Path("upload_ckpt.json")
-SHARD_SIZE = 1000
+SHARD_SIZE = 500
 
 IMAGE_TYPE = pa.struct([
     pa.field("bytes", pa.large_binary()),
