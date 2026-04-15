@@ -18,9 +18,26 @@ from OCP.BRepCheck import BRepCheck_Analyzer
 py_path = Path(sys.argv[1])
 out_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else py_path.parent
 step_path = out_dir / (py_path.stem + '.step')
+import ast, re
 namespace = {}
 exec(py_path.read_text(), namespace)
 result = namespace.get('result') or namespace.get('solid') or namespace.get('shape') or namespace.get('part')
+if result is None:
+    # Fallback: find the last top-level assignment in the script and use that variable
+    try:
+        tree = ast.parse(py_path.read_text())
+        last_var = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        last_var = t.id
+            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                last_var = node.target.id
+        if last_var and last_var in namespace:
+            result = namespace[last_var]
+    except Exception:
+        pass
 if result is None:
     print('ERROR: no result variable', file=sys.stderr)
     sys.exit(1)
