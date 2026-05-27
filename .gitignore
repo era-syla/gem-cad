@@ -1,0 +1,61 @@
+# Datasets and large data dirs
+datasets/
+gray_cad*/
+new_batch/
+second_batch_job*/
+stage2_outputs*/
+chunk*/
+embeddings/
+images/
+venv/
+vertex_predictions_py/
+
+# Pickle / embedding files
+*.pkl
+
+# Graph JSONL files
+batch*_graphs.jsonl
+
+# Step output dirs (not scripts)
+*_step/
+*_steps/
+
+# Results directories
+bench*_results*/
+bench*_mv_results*/
+bench*_pbr_results*/
+all_31_py/
+results/
+
+# JSONL outputs and zips
+jsonl_outputs/
+mv_jsonl_outputs/
+multiview_outputs/
+*.zip
+
+# Log files
+*.txt
+*.log
+
+# JSON score files (large)
+*_iou_scores.json
+iou_scores*.json
+
+# Step/image outputs
+*.step
+*.stl
+*.png
+*.jpg
+bench0_steps/
+bench3_fixed/
+
+# Batch request files
+batch_requests.jsonl
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# DS Store
+.DS_Store

@@ -11,7 +11,9 @@ import json
 import mimetypes
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 import requests
 
@@ -126,6 +128,9 @@ def main():
                         help="Comma-separated list of specific image filenames to process")
     parser.add_argument("--debug", action="store_true",
                         help="Print raw API response metadata")
+    parser.add_argument("--workers", type=int, default=1, help="Parallel workers")
+    parser.add_argument("--rpm", type=int, default=60, help="Max requests per minute")
+    parser.add_argument("--prefix", type=str, default="", help="Prefix for output filenames")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -152,13 +157,29 @@ def main():
 
     tot_in, tot_out, tot_think = 0, 0, 0
     t_start = time.time()
+    print_lock = Lock()
+    rate_lock = Lock()
+    last_req_time = [0.0]
+    min_interval = 60.0 / args.rpm  # seconds between requests
 
-    for i, img_path in enumerate(images):
-        out_path = input_dir / f"{img_path.stem}{args.suffix}.py"
+    def process_one(idx_img):
+        i, img_path = idx_img
+        out_path = input_dir / f"{args.prefix}{img_path.stem}{args.suffix}.py"
         if out_path.exists():
-            print(f"[{i+1}/{len(images)}] {img_path.name}... skipped (exists)")
-            continue
-        print(f"[{i+1}/{len(images)}] {img_path.name}...", end=" ", flush=True)
+            with print_lock:
+                print(f"[{i}/{len(images)}] {img_path.name}... skipped (exists)")
+            return 0, 0, 0
+
+        # Rate limit
+        with rate_lock:
+            now = time.time()
+            wait = min_interval - (now - last_req_time[0])
+            if wait > 0:
+                time.sleep(wait)
+            last_req_time[0] = time.time()
+
+        with print_lock:
+            print(f"[{i}/{len(images)}] {img_path.name}...", end=" ", flush=True)
         t0 = time.time()
 
         code, inp, out, think = call_gemini(
@@ -175,18 +196,22 @@ def main():
                 lines = lines[:-1]
             code = "\n".join(lines)
 
-        out_path = input_dir / f"{img_path.stem}{args.suffix}.py"
         out_path.write_text(code)
-
-        tot_in += inp
-        tot_out += out
-        tot_think += think
-
         elapsed = time.time() - t0
-        print(f"done in {elapsed:.1f}s (out={out}, think={think})")
+        with print_lock:
+            print(f"done in {elapsed:.1f}s (out={out}, think={think})")
+        return inp, out, think
+
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = [executor.submit(process_one, (i+1, img)) for i, img in enumerate(images)]
+        for future in as_completed(futures):
+            inp, out, think = future.result()
+            tot_in += inp
+            tot_out += out
+            tot_think += think
 
     t_total = time.time() - t_start
-    n = len(images)
+    n = max(len(images), 1)
     cost_in = tot_in / 1_000_000 * 2.50
     cost_out = (tot_out + tot_think) / 1_000_000 * 15.00
 
