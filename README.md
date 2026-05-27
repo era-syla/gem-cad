@@ -10,101 +10,55 @@ End-to-end pipeline for generating CadQuery code from CAD images using Gemini, c
 pip install google-genai cadquery pythonocc-core openai anthropic pyarrow pillow huggingface-hub
 ```
 
-Or install the minimal set for batch generation only:
-```bash
-pip install -r requirements.txt
-```
-
 ---
 
 ## Scripts
 
-### Generation
-
-#### `batch_gemini.py`
-Batch Gemini API caller for CAD model generation from single-view images.
+### 1. `generate.py`
+Generate CadQuery code from CAD images using Gemini. Supports batch (via Gemini Batch API) and single (direct API) modes. Use `--multiview` for images containing 4 views of the same object.
 
 ```bash
-GEMINI_API_KEY=your_key python batch_gemini.py \
+# Batch mode (default) — upload, submit, poll, download
+GEMINI_API_KEY=key python generate.py \
   --input_dir ./images \
   --output_dir ./results \
   --skip_existing \
   --workers 8
+
+# Multi-view images (4 views per image)
+GEMINI_API_KEY=key python generate.py \
+  --input_dir ./multiview_images \
+  --output_dir ./results \
+  --multiview
+
+# Single mode — direct API calls, useful for testing
+GEMINI_API_KEY=key python generate.py \
+  --input_dir ./images \
+  --output_dir ./results \
+  --mode single \
+  --max_images 10 \
+  --thinking MEDIUM
 ```
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--input_dir` | required | Directory containing input images |
 | `--output_dir` | `./results` | Directory for output `.py` files |
-| `--model` | `gemini-3.1-pro-preview` | Gemini model name |
-| `--suffix` | `_31` | Suffix for output `.py` files |
-| `--thinking` | None | Thinking level: `LOW`, `MEDIUM`, `HIGH` |
+| `--mode` | `batch` | `batch` or `single` |
+| `--multiview` | False | Use 4-view prompt |
+| `--model` | `gemini-3.1-pro-preview` | Gemini model |
+| `--suffix` | `_31` (`_31_mv` if multiview) | Output file suffix |
+| `--thinking` | None | `LOW`, `MEDIUM`, `HIGH` |
 | `--workers` | `8` | Parallel upload workers |
-| `--skip_existing` | False | Skip images that already have output |
+| `--skip_existing` | False | Skip already-processed images |
 | `--max_images` | None | Limit number of images |
 | `--recursive` | False | Recurse into subfolders |
-| `--poll_interval` | `30` | Seconds between batch status polls |
+| `--rpm` | `60` | Max requests/min (single mode) |
 
 ---
 
-#### `batch_gemini_multiview.py`
-Same as `batch_gemini.py` but prompts the model to treat the input as 4 views of one shape. Default suffix is `_31_mv`.
-
-```bash
-GEMINI_API_KEY=your_key python batch_gemini_multiview.py \
-  --input_dir ./multiview_images \
-  --output_dir ./results_mv \
-  --skip_existing \
-  --workers 8
-```
-
----
-
-#### `single_gemini.py`
-Single (non-batch) Gemini API calls — useful for quick testing or small sets.
-
-```bash
-GEMINI_API_KEY=your_key python single_gemini.py \
-  --input_dir ./images \
-  --max_images 10 \
-  --thinking MEDIUM \
-  --rpm 30
-```
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--thinking` | None | `LOW`, `MEDIUM`, `HIGH`, `OFF` |
-| `--thinking_budget` | None | Max thinking tokens |
-| `--rpm` | `60` | Max requests per minute |
-| `--files` | None | Comma-separated specific filenames |
-
----
-
-#### `batch_images.py`
-Alternative batch caller using inline image data instead of File API uploads.
-
-```bash
-GEMINI_API_KEY=your_key python batch_images.py \
-  --input_dir ./images \
-  --output_dir ./results \
-  --workers 8
-```
-
----
-
-#### `make_vertex_jsonl.py`
-Builds a JSONL request file for Vertex AI batch prediction jobs. Edit `local_folder`, `bucket_uri`, and `output_file` in the script before running.
-
-```bash
-python make_vertex_jsonl.py
-```
-
----
-
-### Post-processing
-
-#### `postprocess_cq.py`
-Cleans raw Gemini outputs: strips markdown fences, removes `#` comments, removes `show_object()` and `.exportStep()` calls, fixes double-dot syntax errors.
+### 2. `postprocess_cq.py`
+Clean raw Gemini outputs: strip markdown fences, remove `#` comments, remove `show_object()` and `.exportStep()` calls, fix double-dot syntax errors.
 
 ```bash
 python postprocess_cq.py \
@@ -116,15 +70,44 @@ python postprocess_cq.py \
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--inplace` | False | Modify files in place |
-| `--out_suffix` | `_clean` | Suffix for output files if not inplace |
+| `--out_suffix` | `_clean` | Suffix for output if not inplace |
 | `--workers` | `8` | Parallel workers |
 
 ---
 
-### Fixing Invalid Samples
+### 3. `fix_cadquery.py`
+Fix failing CadQuery scripts using Gemini (batch or single) or OpenAI. Reads a TSV of failures (`filename\terror`), re-prompts the model with error context, saves fixed scripts.
 
-#### `fix_invalid.py`
-Fixes scripts that failed execution or geometry validation by re-prompting Gemini with the error and a catalogue of common CadQuery failure modes.
+```bash
+# Gemini batch (recommended for large sets)
+python fix_cadquery.py \
+  --tsv failures.tsv \
+  --input_dir ./results \
+  --provider gemini \
+  --mode batch
+
+# OpenAI single
+python fix_cadquery.py \
+  --tsv failures.tsv \
+  --input_dir ./results \
+  --provider openai \
+  --mode single \
+  --workers 4
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--tsv` | required | TSV file with `filename\terror` |
+| `--provider` | `gemini` | `gemini` or `openai` |
+| `--mode` | `batch` | `batch` or `single` |
+| `--thinking` | None | Gemini thinking level |
+| `--workers` | `4` | Parallel workers (single mode) |
+| `--max_fixes` | None | Limit number to fix |
+
+---
+
+### 4. `fix_invalid.py`
+Fix scripts that failed execution or BRepCheck validation by re-prompting Gemini with the error and a catalogue of common CadQuery failure modes. Can fully rewrite from scratch.
 
 ```bash
 python fix_invalid.py \
@@ -135,152 +118,92 @@ python fix_invalid.py \
 
 ---
 
-#### `fix_cq_errors.py`
-Fixes failing CadQuery scripts using OpenAI or Gemini with the error message as context.
+### 5. `py_to_step.py`
+Convert CadQuery `.py` files to STEP. Supports directory input or JSON predictions file. Optionally validates geometry with OpenCASCADE `BRepCheck_Analyzer`.
 
 ```bash
-python fix_cq_errors.py \
-  --input_dir ./results \
-  --provider gemini \
-  --api_key YOUR_KEY \
-  --workers 4
-```
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--provider` | `openai` | `openai` or `gemini` |
-| `--thinking` | None | Gemini thinking level |
-| `--max_fixes` | None | Limit number of scripts to fix |
-
----
-
-#### `batch_fix_chunks.py`
-Batch version of the fix pipeline — reads a TSV of failures and submits them as a Gemini batch job.
-
-```bash
-python batch_fix_chunks.py \
-  --tsv /tmp/failures.tsv \
-  --api_key YOUR_KEY \
-  --chunk_name chunk1 \
-  --py_dir ./results
-```
-
----
-
-### Conversion & Validation
-
-#### `convert_to_step.py`
-Converts CadQuery `.py` files to STEP and validates geometry with OpenCASCADE `BRepCheck_Analyzer`.
-
-```bash
-python convert_to_step.py \
+# From directory
+python py_to_step.py \
   --input_dir ./results \
   --suffix _31 \
+  --validate \
   --workers 8
-```
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--output_dir` | `{input_dir}_step/` | Where to save STEP files |
-| `--timeout` | `30` | Max seconds per conversion |
-| `--skip_existing` | False | Skip already converted files |
-
----
-
-#### `json_to_step.py`
-Converts `generated` CadQuery code from prediction JSON files to STEP files. Expects JSON with `file_id` and `generated` fields.
-
-```bash
-python json_to_step.py \
-  --input predictions.json \
+# From JSON predictions file
+python py_to_step.py \
+  --input_json predictions.json \
   --output_dir ./step_outputs \
-  --workers 8 \
-  --timeout 30
-```
-
----
-
-#### `validate_and_collect.py`
-Converts CadQuery files to STEP, validates geometry, and collects valid pairs into an output folder.
-
-```bash
-python validate_and_collect.py \
-  --output_dir ./valid_cq \
   --workers 8
 ```
 
----
-
-### IOU Scoring
-
-#### `iou.py`
-Core IOU utility. Loads two STEP files, aligns them via center of mass and principal axes of inertia, and computes volumetric IOU.
-
-```bash
-python iou.py ground_truth.step generated.step
-```
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--input_dir` | — | Directory with `.py` files |
+| `--input_json` | — | JSON file with `file_id` + `generated` |
+| `--output_dir` | `{input_dir}_step/` | Where to save STEP files |
+| `--validate` | False | Run BRepCheck topology validation |
+| `--timeout` | `30` | Max seconds per conversion |
+| `--failures_tsv` | None | Write failed conversions to TSV |
 
 ---
 
-#### `batch_iou.py`
-Computes IOU scores across a directory of generated STEP files vs ground truth.
+### 6. `compute_iou.py`
+Compute volumetric IOU between ground truth and generated STEP files. Supports same-directory (suffix-based matching) or separate GT/pred directories.
 
 ```bash
-python batch_iou.py \
-  --input_dir ./gt_steps \
-  --gen_dir ./generated_steps \
+# Same directory (GT + generated in same dir)
+python compute_iou.py \
+  --input_dir ./bench0_steps \
   --suffix _31 \
+  --output scores.json
+
+# Separate GT and predicted directories
+python compute_iou.py \
+  --gt_dir ./gt_steps \
+  --pred_dir ./pred_steps \
   --output scores.json \
-  --workers 8
-```
-
----
-
-#### `batch_iou_orcd.py`
-IOU scoring for ORCD — matches `{file_id}.step` (GT) with `{file_id}_gen.step` (predicted). Outputs per-sample scores and summary stats including valid rate, mean, and median IOU.
-
-```bash
-python batch_iou_orcd.py \
-  --gt_dir /path/to/gt_steps \
-  --pred_dir /path/to/pred_steps \
-  --output results.json \
   --workers 8 \
   --timeout 120
 ```
 
----
-
-### Batch Management
-
-#### `download_batch_results.py`
-Downloads results from completed Gemini batch jobs.
-
-```bash
-GEMINI_API_KEY=your_key python download_batch_results.py \
-  --jobs JOB_ID1 JOB_ID2 \
-  --output_dir ./results \
-  --suffix _31
-```
+Output JSON includes `valid_rate`, `mean_iou`, `median_iou`, per-sample scores, and error details.
 
 ---
 
-#### `check_batch_status.py`
-Checks the status of a submitted Gemini batch job and optionally polls until completion.
+### 7. `manage_batches.py`
+Check status of Gemini batch jobs, poll until completion, and download results.
 
 ```bash
-python check_batch_status.py \
-  --batch batches/abc123 \
-  --apikey YOUR_KEY \
+# List all jobs
+python manage_batches.py --list
+
+# Check and download a specific job
+python manage_batches.py \
+  --check batches/abc123 \
   --poll \
-  --out results.jsonl
+  --download \
+  --output_dir ./results
+
+# Multiple jobs
+python manage_batches.py \
+  --check batches/abc123 batches/def456 \
+  --download \
+  --output_dir ./results
 ```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--check` | — | Job ID(s) to check |
+| `--list` | False | List all batch jobs |
+| `--poll` | False | Poll until terminal state |
+| `--download` | False | Download results if succeeded |
+| `--output_format` | `py` | `py` or `jsonl` |
+| `--interval` | `30` | Poll interval in seconds |
 
 ---
 
-### Dataset Upload
-
-#### `upload_to_gemcad.py`
-Uploads `.py` + `.png` pairs to the `DeCoDELab/gemcad_data` HuggingFace dataset in parquet format with resumable checkpointing.
+### 8. `upload_to_gemcad.py`
+Upload `.py` + `.png` pairs to the `DeCoDELab/gemcad_data` HuggingFace dataset in parquet format with resumable checkpointing.
 
 ```bash
 python upload_to_gemcad.py \
@@ -291,15 +214,49 @@ python upload_to_gemcad.py \
 
 ---
 
+### 9. `iou.py`
+Core IOU library. Loads STEP files, aligns shapes via center of mass and principal axes of inertia, computes volumetric IOU. Used as a module by `compute_iou.py`.
+
+```bash
+# Direct usage
+python iou.py ground_truth.step generated.step
+```
+
+---
+
+## Typical Workflow
+
+```bash
+# 1. Generate CadQuery code from images
+GEMINI_API_KEY=key python generate.py --input_dir ./images --output_dir ./results --skip_existing
+
+# 2. Clean outputs
+python postprocess_cq.py --input_dir ./results --suffix _31 --inplace
+
+# 3. Convert to STEP (validates geometry)
+python py_to_step.py --input_dir ./results --suffix _31 --validate --failures_tsv failures.tsv
+
+# 4. Fix failed scripts
+python fix_cadquery.py --tsv failures.tsv --input_dir ./results --provider gemini --mode batch
+
+# 5. Compute IOU against ground truth
+python compute_iou.py --gt_dir ./gt_steps --pred_dir ./results_step --output scores.json
+
+# 6. Upload to HuggingFace
+python upload_to_gemcad.py --token HF_TOKEN --input-dir ./results
+```
+
+---
+
 ## Dependencies
 
 | Package | Used by |
 |---------|---------|
-| `google-genai` | All `batch_gemini*` scripts |
-| `cadquery` | `convert_to_step`, `fix_invalid`, `validate_and_collect`, `json_to_step` |
-| `pythonocc-core` | `iou.py`, `batch_iou*.py` |
-| `openai` | `fix_cq_errors` (OpenAI provider) |
-| `anthropic` | `fix_invalid` |
-| `pyarrow` | `upload_to_gemcad` |
-| `pillow` | `upload_to_gemcad` |
-| `huggingface-hub` | `upload_to_gemcad` |
+| `google-genai` | `generate.py`, `fix_cadquery.py`, `manage_batches.py` |
+| `cadquery` | `py_to_step.py`, `fix_invalid.py` |
+| `pythonocc-core` | `iou.py`, `compute_iou.py`, `py_to_step.py` |
+| `openai` | `fix_cadquery.py` (OpenAI provider) |
+| `anthropic` | `fix_invalid.py` |
+| `pyarrow` | `upload_to_gemcad.py` |
+| `pillow` | `upload_to_gemcad.py` |
+| `huggingface-hub` | `upload_to_gemcad.py` |
